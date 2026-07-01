@@ -15,15 +15,14 @@ def home():
     return "CinemaZone Guard is Active"
 
 def run():
-    # المنفذ الافتراضي الذي يبحث عنه Render
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port)
 
 Thread(target=run).start()
 # -------------------------------------
 
-# 🔐 مفاتيح الربط الأساسية (تأكد من صحتها تماماً)
-BOT_TOKEN = "8891273359:AAEnUSaKQrz7TYMUuGmNIXyKNgMbuNqtlHg"
+# 🔐 مفاتيح الربط الأساسية المحدثة
+BOT_TOKEN = "8891273359:AAGX87IasRFVYuaksMDVSgKZWbz_TQ94jbA"
 FIREBASE_DB_URL = "https://cinemazone-a11ba-default-rtdb.europe-west1.firebasedatabase.app/"
 ADMIN_ID = 7861493  # معرف حسابك الأساسي كمدير
 
@@ -31,11 +30,9 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 def generate_and_save_token():
     """دالة توليد التوكن العشوائي وحفظه مباشرة في الفايربيز مع وقت الصلاحية"""
-    # توليد الجزء العشوائي المكون من 8 خانات
     random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
     token_code = f"cz_{random_suffix}"
     
-    # حساب وقت الانتهاء ووقت الإنشاء بالملي ثانية (صلاحية 10 دقائق)
     expiry_time = int((time.time() + (10 * 60)) * 1000)
     created_time = int(time.time() * 1000)
     
@@ -45,15 +42,11 @@ def generate_and_save_token():
     }
     
     try:
-        # تجهيز الرابط المباشر للفايربيز والتأكد من صيغة الـ URL
         base_url = FIREBASE_DB_URL.rstrip('/')
         url = f"{base_url}/cz_active_tokens/{token_code}.json"
-        
-        # إرسال البيانات للفايربيز
         response = requests.put(url, json=token_data, timeout=10)
-        
         if response.status_code == 200:
-            return token_code  # إرجاع التوكن بنجاح إذا استجابت القاعدة
+            return token_code
     except Exception as e:
         print(f"Firebase Error: {e}")
     
@@ -88,7 +81,7 @@ def callback_inline(call):
         bot.send_message(call.message.chat.id, f"🔑 التوكن الجديد الخاص بك:\n`{new_token}`", parse_mode="Markdown")
     else:
         bot.answer_callback_query(call.id, text="❌ فشل حفظ التوكن في فايربيز")
-        bot.send_message(call.message.chat.id, "❌ خطأ: لم يتمكن البوت من حفظ التوكن في قاعدة البيانات، تأكد من إعدادات الفايربيز.")
+        bot.send_message(call.message.chat.id, "❌ خطأ: لم يتمكن البوت من حفظ التوكن في قاعدة البيانات.")
 
-# تشغيل البوت بشكل مستمر ومقاوم للانقطاع
+# تشغيل البوت بشكل مستمر
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
