@@ -53,15 +53,32 @@ def block_user_in_firebase(user_id, username, reason):
         print(f"Error blocking user: {e}")
 
 def generate_and_save_token():
+    current_time_ms = int(time.time() * 1000)
+    
+    # 🧹 [تحديث أمني تلقائي] تنظيف وتطهير قاعدة البيانات من التوكنات القديمة المنتهية أولاً
+    try:
+        active_tokens_url = f"{FIREBASE_DB_URL}cz_active_tokens.json"
+        tokens_response = requests.get(active_tokens_url)
+        if tokens_response.status_code == 200 and tokens_response.json():
+            all_tokens = tokens_response.json()
+            for t_code, t_data in all_tokens.items():
+                # إذا انتهت صلاحية التوكن (أقل من الوقت الحالي)، احذفه فوراً
+                if t_data.get("expiry", 0) < current_time_ms:
+                    delete_url = f"{FIREBASE_DB_URL}cz_active_tokens/{t_code}.json"
+                    requests.delete(delete_url)
+            print("🧹 Database Cleared: Expired tokens have been successfully purged.")
+    except Exception as e:
+        print(f"Error purging old tokens: {e}")
+
+    # ⚡ توليد التوكن الجديد
     random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
     token_code = f"cz_{random_suffix}"
     
-    expiry_time = int((time.time() + (10 * 60)) * 1000)
-    created_time = int(time.time() * 1000)
+    expiry_time = current_time_ms + (10 * 60 * 1000) # صلاحية 10 دقائق
     
     token_data = {
         "expiry": expiry_time,
-        "created": created_time
+        "created": current_time_ms
     }
     
     try:
