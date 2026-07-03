@@ -5,18 +5,30 @@ import random
 import string
 import time
 import requests
+from threading import Thread
+from flask import Flask
 
-# 1. 🔒 إخفاء وتأمين توكن البوت (يقرأ تلقائياً من إعدادات سيرفر Render المخفية)
+# 🌐 إعداد سيرفر ويب وهمي لإرضاء Render ومنع تعليق المنفذ (Port Timeout)
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "CinemaZone Guard is Live!"
+
+def run_flask():
+    # Render يمرر المنفذ تلقائياً عبر المتغير البيئي PORT، وإذا لم يجده يستخدم 8080
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# 1. 🔒 إخفاء وتأمين توكن البوت
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # 2. بيانات الفايربيز (الـ REST API للـ Realtime Database)
 FIREBASE_DB_URL = "https://cinemazone-a11ba-default-rtdb.europe-west1.firebasedatabase.app/"
 
-# مخزن مؤقت لعدّاد الحماية من الإغراق (Anti-Spam Tracking)
 user_requests = {}
 
-# 🛡️ دالة للتحقق هل المستخدم محظور في الفايربيز أم لا
 def is_user_blocked(user_id):
     try:
         url = f"{FIREBASE_DB_URL}cz_blocked_users/{user_id}.json"
@@ -27,7 +39,6 @@ def is_user_blocked(user_id):
         print(f"Error checking block list: {e}")
     return False
 
-# 🚫 دالة لحظر المخرب تلقائياً في الفايربيز
 def block_user_in_firebase(user_id, username, reason):
     try:
         url = f"{FIREBASE_DB_URL}cz_blocked_users/{user_id}.json"
@@ -37,16 +48,15 @@ def block_user_in_firebase(user_id, username, reason):
             "timestamp": int(time.time() * 1000)
         }
         requests.put(url, json=block_data)
-        print(f"🚫 User {user_id} has been blocked automatically due to: {reason}")
+        print(f"🚫 User {user_id} has been blocked due to: {reason}")
     except Exception as e:
         print(f"Error blocking user: {e}")
 
-# دالة لتوليد توكن عشوائي فريد وحفظه في الفايربيز للموقع
 def generate_and_save_token():
     random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
     token_code = f"cz_{random_suffix}"
     
-    expiry_time = int((time.time() + (10 * 60)) * 1000)  # 10 دقائق صلاحية
+    expiry_time = int((time.time() + (10 * 60)) * 1000)
     created_time = int(time.time() * 1000)
     
     token_data = {
@@ -63,35 +73,27 @@ def generate_and_save_token():
         print(f"Error saving to Firebase: {e}")
     return None
 
-# التعامل مع أمر /start لجميع الحسابات مع تفعيل الفخاخ الأمنية
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
     username = message.from_user.username
     current_time = time.time()
 
-    # 🛑 1. فحص هل المستخدم في قائمة الحظر الأساسية؟
     if is_user_blocked(user_id):
         bot.reply_to(message, "❌ تم تقييد وصولك لمنصة سِينِمَا زُونْ نهائياً لمخالفة معايير الأمان الإدارية.")
         return
 
-    # 🛑 2. نظام مصيدة الإغراق (Anti-Spam) - حظر تلقائي للمخربين
     if user_id not in user_requests:
         user_requests[user_id] = []
     
-    # تنظيف الطلبات القديمة التي مرت عليها أكثر من 10 ثوانٍ
     user_requests[user_id] = [t for t in user_requests[user_id] if current_time - t < 10]
-    
-    # إضافة الطلب الحالي
     user_requests[user_id].append(current_time)
     
-    # إذا أرسل أكثر من 5 طلبات في أقل من 10 ثوانٍ (سلوك تخريبي)
     if len(user_requests[user_id]) > 5:
         block_user_in_firebase(user_id, username, "محاولة إغراق البوت بالطلبات متكررة (Spamming)")
         bot.reply_to(message, "❌ تم حظر حسابك تلقائياً بسبب محاولة إغراق النظام بالطلبات.")
         return
 
-    # 👑 إذا كان الحساب هو حسابك الأساسي (القائد والمسؤول)
     if user_id == 7861493:
         markup = types.InlineKeyboardMarkup()
         btn_generate = types.InlineKeyboardButton("توليد توكن تجريبي ⚡", callback_data="gen_token")
@@ -104,7 +106,6 @@ def send_welcome(message):
             reply_markup=markup
         )
     else:
-        # لجميع الحسابات الأخرى - توليد توكن تلقائي فوراً
         bot.send_chat_action(message.chat.id, 'typing')
         new_token = generate_and_save_token()
         
@@ -120,11 +121,9 @@ def send_welcome(message):
         else:
             bot.reply_to(message, "❌ عذراً، حدث خطأ أثناء الاتصال بقاعدة البيانات. أعد المحاولة لاحقاً.")
 
-# التعامل مع الضغط على الزر بداخل حساب الإدارة
 @bot.callback_query_handler(func=lambda call: call.data == "gen_token")
 def callback_inline(call):
     if call.message:
-        # تأكيد إضافي لحماية زر القائد
         if call.from_user.id != 7861493:
             bot.answer_callback_query(call.id, text="❌ غير مصرح لك!")
             return
@@ -133,6 +132,9 @@ def callback_inline(call):
         bot.answer_callback_query(call.id, text="تم التوليد والحفظ بنجاح! 🔥")
         bot.send_message(call.message.chat.id, f"👑 توكن جديد تم حقنه في الفايربيز:\n`{new_token}`", parse_mode="Markdown")
 
-# تشغيل البوت المستمر
-print("🤖 CinemaZone Muted Bot is now running securely with Double-Layer Shielding...")
+# 🚀 تشغيل سيرفر الويب في مسار منفصل (Thread) قبل تشغيل البوت
+server_thread = Thread(target=run_flask)
+server_thread.start()
+
+print("🤖 CinemaZone Guard Bot is starting with Web Port support...")
 bot.infinity_polling()
