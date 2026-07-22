@@ -27,8 +27,8 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# 1. 🔒 إخفاء وتأمين توكن البوت
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+# 1. 🔒 تأمين التوكن (تم وضع توكنك النشط كخيار احتياطي مباشر لضمان العمل فوراً لو فشل Render في قراءة المتغير)
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") or "8838484441:AAENA1T6lfBoptzVUMtwzDWxXie_O5Aa6M0"
 bot = telebot.TeleBot(BOT_TOKEN)
 
 # 2. بيانات الفايربيز (الـ REST API للـ Realtime Database)
@@ -59,7 +59,7 @@ def block_user_in_firebase(user_id, username, reason):
     except Exception as e:
         print(f"Error blocking user: {e}")
 
-# 🧹 دالة مستقلة لتطهير وتنظيف قاعدة البيانات من التوكنات القديمة المنتهية
+# 🧹 دالة تنظيف قاعدة البيانات من التوكنات القديمة المنتهية
 def purge_expired_tokens():
     current_time_ms = int(time.time() * 1000)
     try:
@@ -68,7 +68,6 @@ def purge_expired_tokens():
         if tokens_response.status_code == 200 and tokens_response.json():
             all_tokens = tokens_response.json()
             for t_code, t_data in all_tokens.items():
-                # إذا انتهت صلاحية التوكن (أقل من الوقت الحالي)، احذفه فوراً
                 if t_data.get("expiry", 0) < current_time_ms:
                     delete_url = f"{FIREBASE_DB_URL}cz_active_tokens/{t_code}.json"
                     requests.delete(delete_url)
@@ -78,18 +77,13 @@ def purge_expired_tokens():
 
 # ⚡ دالة توليد التوكن وحفظه مع ربط معرّف التلغرام الحقيقي للعضو
 def generate_and_save_token(username=None):
-    # تنظيف وتطهير قاعدة البيانات أولاً
     purge_expired_tokens()
-
     current_time_ms = int(time.time() * 1000)
     
-    # توليد التوكن الجديد
     random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
     token_code = f"cz_{random_suffix}"
-    
     expiry_time = current_time_ms + (10 * 60 * 1000) # صلاحية 10 دقائق
     
-    # 👤 ربط التوكن باسم حساب المستخدم الحقيقي في التلغرام لإرساله للوحة الإشراف والموقع
     formatted_username = f"@{username}" if username else "👤 عضو فخم"
     
     token_data = {
@@ -128,6 +122,7 @@ def send_welcome(message):
         bot.reply_to(message, "❌ تم حظر حسابك تلقائياً بسبب محاولة إغراق النظام بالطلبات.")
         return
 
+    # 🚨 ملاحظة هامة: تأكد أن رقم الـ ID التالي هو رقم حسابك الشخصي في تلغرام لتفتح لك اللوحة القيادية
     if user_id == 7861493:
         markup = types.InlineKeyboardMarkup()
         btn_generate = types.InlineKeyboardButton("توليد توكن تجريبي ⚡", callback_data="gen_token")
@@ -141,8 +136,6 @@ def send_welcome(message):
         )
     else:
         bot.send_chat_action(message.chat.id, 'typing')
-        
-        # تمرير اسم المستخدم البرقي لربطه برمز التوكن بشكل موثق
         new_token = generate_and_save_token(username)
         
         if new_token:
@@ -173,4 +166,12 @@ server_thread = Thread(target=run_flask)
 server_thread.start()
 
 print("🤖 CinemaZone Guard Bot is starting with Web Port support...")
+
+# 🧼 إجراء حاسم: حذف أي وب-هوك معلق لتنظيف البوابة فوراً وسماح بالـ Polling
+try:
+    bot.remove_webhook()
+    print("🧼 Webhooks cleaned completely from Telegram Servers.")
+except Exception as e:
+    print(f"Webhook clearance log: {e}")
+
 bot.infinity_polling()
