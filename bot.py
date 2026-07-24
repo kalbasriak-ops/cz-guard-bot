@@ -6,23 +6,12 @@ import string
 import time
 import requests
 from threading import Thread
-from flask import Flask
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
-# 🌐 إعداد سيرفر ويب وهمي لإرضاء Render ومنع تعليق المنفذ (Port Timeout)
+# 🤖 إعداد سيرفر ويب حقيقي لاستقبال إشعارات أمان بصمة العتاد والواجهة
 app = Flask('')
-
-@app.route('/')
-def home():
-    # 🧼 تنظيف تلقائي للتوكنات المنتهية مع وضع حماية لحساب بايتات الرد
-    try:
-        purge_expired_tokens()
-    except Exception as e:
-        print(f"Cron automatic purge failed: {e}")
-    return "OK", 200
-
-def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+CORS(app)  # للسماح بطلب الـ API من المتصفح دون مشاكل CORS
 
 # 1. 🔒 الفحص الذكي والصارم لتوكن البوت لمنع تضارب إعدادات Render
 ENV_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -35,15 +24,70 @@ else:
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# 2. بيانات الفايربيز (الـ REST API للـ Realtime Database)
+# 2. بيانات الفايربيز المعرفة مسبقاً
 FIREBASE_DB_URL = "https://cinemazone-a11ba-default-rtdb.europe-west1.firebasedatabase.app/"
+ADMIN_CHAT_ID = 7861493  # معرف حسابك الإداري الموثق
 
 user_requests = {}
 
+def send_telegram_alert(message):
+    """دالة داخلية لإرسال التنبيهات الإدارية الفورية مباشرة للمدير"""
+    try:
+        bot.send_message(ADMIN_CHAT_ID, message, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Failed to send admin telegram alert: {e}")
+
+# ==========================================
+# 📡 جسر استقبال الإشعارات الفورية (API Endpoints)
+# ==========================================
+@app.route('/')
+def home():
+    # 🧼 تنظيف تلقائي للتوكنات المنتهية مع وضع حماية لحساب بايتات الرد
+    try:
+        purge_expired_tokens()
+    except Exception as e:
+        print(f"Cron automatic purge failed: {e}")
+    return "Cinema Zone Guard Engine Status: ACTIVE", 200
+
+@app.route('/api/security/alert', methods=['POST'])
+def security_alert():
+    """مستقبل التنبيهات وجسر الأمان القادم من سكريبت العتاد في الموقع"""
+    data = request.get_json() or {}
+    token = data.get('token', 'غير معروف')
+    username = data.get('username', 'عضو مجهول')
+    fingerprint = data.get('fingerprint', 'لا يوجد')
+    alert_type = data.get('type', 'auth_attempt')
+    
+    if alert_type == "hardware_block":
+        msg = (
+            f"🚨 *تنبيه أمان: محاولة اختراق أو جهاز متعدد!*\n\n"
+            f"👤 *المستخدم:* {username}\n"
+            f"🔑 *التوكن المستخدم:* `{token}`\n"
+            f"🛡️ *بصمة العتاد المطرودة:* `{fingerprint}`\n\n"
+            f"🔺 _تم تفعيل الحظر التلقائي وطرد الجهاز بنجاح من جدار الحماية!_"
+        )
+    else:
+        msg = (
+            f"✨ *دخول فخم جديد للمنصة* ✨\n\n"
+            f"👤 *المستخدم:* {username}\n"
+            f"🔑 *التوكن:* `{token}`\n"
+            f"📱 *بصمة عتاد الجهاز:* `{fingerprint}`\n\n"
+            f"🍿 _استعد للمتعة والمغامرة في Cinema Zone!_"
+        )
+        
+    send_telegram_alert(msg)
+    return jsonify({"status": "success", "message": "Alert dispatched to Admin Telegram."}), 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+# ==========================================
+# 🛡️ الدوال المساعدة وفحوصات الأمان القديمة
+# ==========================================
 def is_user_blocked(user_id):
     try:
         url = f"{FIREBASE_DB_URL}cz_blocked_users/{user_id}.json"
-        # ⏱️ إضافة مهلة 5 ثوانٍ لمنع تجمد البوت إذا علق سيرفر الفايربيز
         response = requests.get(url, timeout=5)
         if response.status_code == 200 and response.json() is not None:
             return True
@@ -64,7 +108,6 @@ def block_user_in_firebase(user_id, username, reason):
     except Exception as e:
         print(f"Error blocking user: {e}")
 
-# 🧹 دالة تنظيف قاعدة البيانات من التوكنات القديمة المنتهية بمهلات زمنية آمنة
 def purge_expired_tokens():
     current_time_ms = int(time.time() * 1000)
     try:
@@ -80,7 +123,6 @@ def purge_expired_tokens():
     except Exception as e:
         print(f"Error purging old tokens: {e}")
 
-# ⚡ دالة توليد التوكن وحفظه
 def generate_and_save_token(username=None):
     try:
         purge_expired_tokens()
@@ -108,13 +150,15 @@ def generate_and_save_token(username=None):
         print(f"Error saving to Firebase: {e}")
     return None
 
+# ==========================================
+# 🤖 معالجات التلغرام والأوامر التفاعلية للبوت
+# ==========================================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
     username = message.from_user.username
     current_time = time.time()
 
-    # فحص الحظر الآمن مع تجنب التعليق
     try:
         if is_user_blocked(user_id):
             bot.reply_to(message, "❌ تم تقييد وصولك لمنصة سِينِمَا زُونْ نهائياً لمخالفة معايير الأمان الإدارية.")
@@ -134,15 +178,15 @@ def send_welcome(message):
         return
 
     # 🚨 القائد والمشرف العام
-    if user_id == 7861493:
+    if user_id == ADMIN_CHAT_ID:
         markup = types.InlineKeyboardMarkup()
         btn_generate = types.InlineKeyboardButton("توليد توكن تجريبي ⚡", callback_data="gen_token")
         markup.add(btn_generate)
         
         bot.reply_to(message, 
             "👑 مرحباً بك يا قائد في لوحة التحكم السرية للحارس!\n\n"
-            "• حالة الجدار الناري: 🔒 نشط ومؤمن 100%.\n"
-            "• نظام الأمن المزدوج: 🛡️ مفعّل ويرصد المخربين تلقائياً.", 
+            f"• حالة الجدار الناري للعتاد: 🔒 نشط ويرصد المحاولات.\n"
+            "• نظام الـ API المدمج: 🛰️ متصل وجاهز لبث التنبيهات الإدارية الفورية.", 
             reply_markup=markup
         )
     else:
@@ -164,7 +208,7 @@ def send_welcome(message):
 @bot.callback_query_handler(func=lambda call: call.data == "gen_token")
 def callback_inline(call):
     if call.message:
-        if call.from_user.id != 7861493:
+        if call.from_user.id != ADMIN_CHAT_ID:
             bot.answer_callback_query(call.id, text="❌ غير مصرح لك!")
             return
             
@@ -176,13 +220,11 @@ def callback_inline(call):
 server_thread = Thread(target=run_flask)
 server_thread.start()
 
-print("🤖 CinemaZone Guard Bot is starting with Web Port support...")
+print("🤖 CinemaZone Guard Bot & API Alert System is starting on Web Port...")
 
-# 🧼 مسح الوب هوك القديم بشكل إجباري لإنعاش الـ Polling
 try:
     bot.remove_webhook()
 except Exception:
     pass
 
-# تشغيل البوت مع حمايته من الانهيار المفاجئ وسد الثغرات
 bot.infinity_polling(timeout=10, long_polling_timeout=5)
