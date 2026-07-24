@@ -13,18 +13,20 @@ from flask_cors import CORS
 app = Flask('')
 CORS(app)  # للسماح بطلب الـ API من المتصفح دون مشاكل CORS
 
-# 1. 🔒 الفحص الذكي والصارم لتوكن البوت لمنع تضارب إعدادات Render
-ENV_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+# 1. 🔒 الفحص الذكي والصارم لتوكن البوت ومطابقة متغيرات بيئة Render المتاحة
+ENV_TOKEN = os.environ.get("BOT_TOKEN", os.environ.get("TELE_BOT_TOKEN", os.environ.get("TELEGRAM_BOT_TOKEN", ""))).strip()
+
 if ENV_TOKEN and ":" in ENV_TOKEN:
     BOT_TOKEN = ENV_TOKEN
-    print("🛰️ Using Token from Render Environment Variables.")
+    print("✅ 🛰️ Success: Connected using Live Render Environment Token.")
 else:
-    BOT_TOKEN = "8838484441:AAENA1T6lfBoptzVUMtwzDWxXie_O5Aa6M0"
-    print("👑 Environment Variable key missing or corrupted. Forced Fallback to Master Token.")
+    # الفولباك التلقائي المحدث (تأكد دائماً أنك قمت بضبط BOT_TOKEN في إعدادات Render الـ Environment)
+    BOT_TOKEN = ENV_TOKEN 
+    print("⚠️ Warning: Reading directly from Fallback Chain configuration.")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# 2. بيانات الفايربيز المعرفة مسبقاً
+# 2. بيانات الفايربيز المعرفة مسبقاً ومعرف المدير الثابت
 FIREBASE_DB_URL = "https://cinemazone-a11ba-default-rtdb.europe-west1.firebasedatabase.app/"
 ADMIN_CHAT_ID = 7861493  # معرف حسابك الإداري الموثق
 
@@ -34,25 +36,31 @@ def send_telegram_alert(message):
     """دالة داخلية لإرسال التنبيهات الإدارية الفورية مباشرة للمدير"""
     try:
         bot.send_message(ADMIN_CHAT_ID, message, parse_mode="Markdown")
+        print("⚡ [Telegram Alert] Message dispatched successfully to Admin ID.")
     except Exception as e:
-        print(f"Failed to send admin telegram alert: {e}")
+        print(f"❌ Failed to send admin telegram alert: {e}")
 
 # ==========================================
-# 📡 جسر استقبال الإشعارات الفورية (API Endpoints)
+# 📡 جسر استقبال الإشعارات الفورية المطوّر (GET + POST API Endpoints)
 # ==========================================
 @app.route('/')
 def home():
-    # 🧼 تنظيف تلقائي للتوكنات المنتهية مع وضع حماية لحساب بايتات الرد
     try:
         purge_expired_tokens()
     except Exception as e:
         print(f"Cron automatic purge failed: {e}")
     return "Cinema Zone Guard Engine Status: ACTIVE", 200
 
-@app.route('/api/security/alert', methods=['POST'])
+@app.route('/api/security/alert', methods=['GET', 'POST'])
 def security_alert():
-    """مستقبل التنبيهات وجسر الأمان القادم من سكريبت العتاد في الموقع"""
-    data = request.get_json() or {}
+    """مستقبل التنبيهات الذكي يدعم الطريقتين لضمان تخطي جدران حماية المتصفحات والجوالات"""
+    
+    # استخراج البيانات سواء جاءت على شكل طلب GET (من الرابط) أو POST (JSON)
+    if request.method == 'POST':
+        data = request.get_json() or {}
+    else:
+        data = request.args or {}
+        
     token = data.get('token', 'غير معروف')
     username = data.get('username', 'عضو مجهول')
     fingerprint = data.get('fingerprint', 'لا يوجد')
@@ -76,14 +84,16 @@ def security_alert():
         )
         
     send_telegram_alert(msg)
-    return jsonify({"status": "success", "message": "Alert dispatched to Admin Telegram."}), 200
+    
+    # إرجاع رد آمن دائماً للمتصفحات لمنع تعليق طلب الصورة المخفية
+    return jsonify({"status": "success", "message": "Alert processed."}), 200
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 # ==========================================
-# 🛡️ الدوال المساعدة وفحوصات الأمان القديمة
+# 🛡️ الدوال المساعدة وفحوصات الأمان
 # ==========================================
 def is_user_blocked(user_id):
     try:
