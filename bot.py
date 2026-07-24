@@ -13,18 +13,13 @@ from flask_cors import CORS
 app = Flask('')
 CORS(app)  # للسماح بطلب الـ API من المتصفح دون مشاكل CORS
 
-# 1. 🔒 الفحص الذكي والصارم لتوكن البوت ومطابقة متغيرات بيئة Render المتاحة
-ENV_TOKEN = os.environ.get("BOT_TOKEN", os.environ.get("TELE_BOT_TOKEN", os.environ.get("TELEGRAM_BOT_TOKEN", ""))).strip()
-
-if ENV_TOKEN and ":" in ENV_TOKEN:
-    BOT_TOKEN = ENV_TOKEN
-    print("✅ 🛰️ Success: Connected using Live Render Environment Token.")
-else:
-    # الفولباك التلقائي المحدث (تأكد دائماً أنك قمت بضبط BOT_TOKEN في إعدادات Render الـ Environment)
-    BOT_TOKEN = ENV_TOKEN 
-    print("⚠️ Warning: Reading directly from Fallback Chain configuration.")
-
+# ==========================================
+# 🔒 إعداد التوكن الفعلي والمطابق للوحة تحكم Render بشكل مباشر وثابت
+# ==========================================
+BOT_TOKEN = "8891273359:AAGX87IasRFVYuaksMDVSgKZWbz_TQ94jbA"
 bot = telebot.TeleBot(BOT_TOKEN)
+
+print("✅ 🛰️ Success: Connected using hardcoded Master Token (8891273359).")
 
 # 2. بيانات الفايربيز المعرفة مسبقاً ومعرف المدير الثابت
 FIREBASE_DB_URL = "https://cinemazone-a11ba-default-rtdb.europe-west1.firebasedatabase.app/"
