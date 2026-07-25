@@ -119,6 +119,18 @@ def block_user_in_firebase(user_id, username, reason):
     except Exception as e:
         print(f"Error blocking user: {e}")
 
+def save_bot_subscriber(user_id, username):
+    """حفظ معرف المستخدم الفردي في الفايربيز لتمكين البث وتثبيت الرسائل للجميع تلقائياً"""
+    try:
+        url = f"{FIREBASE_DB_URL}cz_bot_subscribers/{user_id}.json"
+        subscriber_data = {
+            "username": f"@{username}" if username else "عضو فخم",
+            "last_interaction": int(time.time() * 1000)
+        }
+        requests.put(url, json=subscriber_data, timeout=3)
+    except Exception as e:
+        print(f"Error saving bot subscriber: {e}")
+
 def purge_expired_tokens():
     current_time_ms = int(time.time() * 1000)
     try:
@@ -158,7 +170,7 @@ def generate_and_save_token(username=None):
         if response.status_code == 200:
             return token_code
     except Exception as e:
-        print(f"Error saving to Firebase: {e}")
+        print(f"Error save to Firebase: {e}")
     return None
 
 # ==========================================
@@ -176,6 +188,9 @@ def send_welcome(message):
             return
     except Exception:
         pass
+
+    # تسجيل الحساب فوراً بقائمة المشتركين للبث والتثبيت لاحقاً
+    save_bot_subscriber(user_id, username)
 
     if user_id not in user_requests:
         user_requests[user_id] = []
@@ -214,7 +229,7 @@ def send_welcome(message):
             welcome_text = (
                 "مرحباً بك في سِينِمَا زُونْ 🍿\n\n"
                 "تم توليد كود الدخول الآمن الخاص بك بنجاح:\n"
-                f"<code>{new_token}</code>\n\n"
+                "f\"<code>{new_token}</code>\n\n\""
                 "⏳ الصلاحية: 10 دقائق فقط (استخدمه الآن قبل انتهاء صلاحيته).\n"
                 "قم بنسخ الكود وضعه في الموقع لتفتح لك المكتبة فوراً! 🎬"
             )
@@ -240,15 +255,18 @@ def callback_inline(call):
             try:
                 tokens_res = requests.get(f"{FIREBASE_DB_URL}cz_active_tokens.json", timeout=5).json() or {}
                 blocks_res = requests.get(f"{FIREBASE_DB_URL}cz_blocked_users.json", timeout=5).json() or {}
+                subs_res = requests.get(f"{FIREBASE_DB_URL}cz_bot_subscribers.json", timeout=5).json() or {}
                 active_count = len(tokens_res)
                 blocked_count = len(blocks_res)
+                subs_count = len(subs_res)
             except Exception:
-                active_count, blocked_count = "N/A", "N/A"
+                active_count, blocked_count, subs_count = "N/A", "N/A", "N/A"
                 
             stats_text = (
                 "📊 <b>تقرير الإحصائيات الفوري للنظام:</b>\n\n"
+                f"• إجمالي المشتركين بالبوت (للبث): 👥 <b>{subs_count} مستخدم</b>\n"
                 f"• التوكنات النشطة بالفايربيز حالياً: 🔑 <b>{active_count} توكن</b>\n"
-                f"• الأجهزة المحظورة نهائياً: 🚫 <b>{blocked_count} جهاز</b>\n"
+                f"• الأجهزة المحظورة نهائياً: 🚫 <b>{blocked_count} جهاز</b>\n\n"
                 "• حالة البوت: 🟢 يعمل بأعلى كفاءة"
             )
             bot.send_message(call.message.chat.id, stats_text, parse_mode="HTML")
@@ -257,36 +275,63 @@ def callback_inline(call):
             bot.answer_callback_query(call.id)
             instruction_text = (
                 "📢 <b>طريقة بث الإعلانات والأخبار وتثبيتها:</b>\n\n"
-                "لبث رسالة أو تنويه فوري وتثبيته في أعلى صفحة البوت، أرسل الأمر كالتالي:\n"
+                "لبث رسالة أو تنويه فوري وتثبيته في أعلى صفحة البوت لجميع المستخدمين، أرسل الأمر كالتالي:\n"
                 "<code>/broadcast اكتب نص الخبر أو الإعلان هنا</code>"
             )
             bot.send_message(call.message.chat.id, instruction_text, parse_mode="HTML")
 
 # ==========================================
-# 📢 دالة البث التلقائي وتثبيت الرسائل (Broadcast & Auto-Pin Feature)
+# 📢 محرك البث الذكي وتثبيت الإعلانات الفردي الجماعي (Broadcast & Dynamic Multi-Pin Engine)
 # ==========================================
 @bot.message_handler(commands=['broadcast'])
 def handle_broadcast(message):
     if message.from_user.id != ADMIN_CHAT_ID:
         return
         
-    # استخراج نص البث بعد الأمر
     command_text = message.text.replace('/broadcast', '').strip()
     
     if not command_text:
         bot.reply_to(message, "❌ <b>صيغة خاطئة!</b> يرجى كتابة الإعلان بعد الأمر، مثال:\n<code>/broadcast سهرة الليلة فيلم رعب فخم جداً!</code>", parse_mode="HTML")
         return
         
+    bot.send_chat_action(message.chat.id, 'typing')
+    broadcast_msg = f"📢 <b>تنويه رسمي من إدارة سِينِمَا زُونْ:</b>\n\n{command_text}"
+    
+    # 1. جلب قائمة كافة المشتركين المسجلين بالفايربيز
     try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        # بث التنويه للمدير وتثبيته تلقائياً ليكون ظاهراً ومعلقاً في الشات كإعلان رسمي فخم
-        broadcast_msg = f"📢 <b>تنويه رسمي من إدارة سِينِمَا زُونْ:</b>\n\n{command_text}"
-        sent_msg = bot.send_message(message.chat.id, broadcast_msg, parse_mode="HTML")
-        bot.pin_chat_message(message.chat.id, sent_msg.message_id)
-        
-        bot.reply_to(message, "✅ <b>تم بث الإعلان بنجاح وتثبيته في أعلى المحادثة كرسالة معلقة!</b>", parse_mode="HTML")
+        subs_url = f"{FIREBASE_DB_URL}cz_bot_subscribers.json"
+        subs_response = requests.get(subs_url, timeout=5)
+        subscribers = subs_response.json() or {}
     except Exception as e:
-        bot.reply_to(message, f"❌ حدث خطأ أثناء معالجة البث والتثبيت المباشر: {e}")
+        bot.reply_to(message, f"❌ تعذر سحب قائمة المشتركين من الفايربيز: {e}")
+        return
+
+    if not subscribers:
+        bot.reply_to(message, "⚠️ لا يوجد مستخدمين مسجلين في قائمة البث حالياً.")
+        return
+
+    success_sends = 0
+    failed_sends = 0
+
+    # 2. إطلاق الدوران التلقائي للإرسال والتثبيت القسري الفردي بداخل شاشة كل مستخدم
+    for target_chat_id in subscribers.keys():
+        try:
+            # إرسال الرسالة للمشترك
+            sent = bot.send_message(int(target_chat_id), broadcast_msg, parse_mode="HTML")
+            # تثبيت الرسالة فوراً في أعلى المحادثة الخاصة به
+            bot.pin_chat_message(int(target_chat_id), sent.message_id)
+            success_sends += 1
+            time.sleep(0.05)  # تأخير بسيط جداً لحماية البوت من حظر التلغرام (Flood Control)
+        except Exception:
+            failed_sends += 1
+
+    # إشعار المدير بنتيجة البث النهائي
+    report_text = (
+        f"📢 <b>تمت عملية البث والتعليق بنجاح!</b>\n\n"
+        f"🟢 تم الإرسال والتثبيت لـ: <b>{success_sends} مستخدم</b>\n"
+        f"🔴 فشل الإرسال لـ: <b>{failed_sends} مستخدم</b> (بسبب حظر البوت أو حسابات مغلقة)"
+    )
+    bot.reply_to(message, report_text, parse_mode="HTML")
 
 # 🚀 تشغيل سيرفر الويب في مسار منفصل (Thread) قبل تشغيل البوت
 server_thread = Thread(target=run_flask)
