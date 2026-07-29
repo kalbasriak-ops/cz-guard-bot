@@ -146,7 +146,7 @@ def purge_expired_tokens():
     except Exception as e:
         print(f"Error purging old tokens: {e}")
 
-def generate_and_save_token(username=None):
+def generate_and_save_token(username=None, chat_id=None):
     try:
         purge_expired_tokens()
     except Exception:
@@ -161,7 +161,8 @@ def generate_and_save_token(username=None):
     token_data = {
         "expiry": expiry_time,
         "created": current_time_ms,
-        "username": formatted_username
+        "username": formatted_username,
+        "chat_id": chat_id  # حفظ الـ chat_id كإجراء أمان إضافي للمساعدة في البث
     }
     
     try:
@@ -223,15 +224,16 @@ def send_welcome(message):
         )
     else:
         bot.send_chat_action(message.chat.id, 'typing')
-        new_token = generate_and_save_token(username)
+        new_token = generate_and_save_token(username, user_id)
         
         if new_token:
+            # 🛠️ تم تصحيح صياغة النص (f-string) هنا لطباعة التوكن داخل الحساب الاحتياطي بنجاح
             welcome_text = (
-                "مرحباً بك في سِينِمَا زُونْ 🍿\n\n"
-                "تم توليد كود الدخول الآمن الخاص بك بنجاح:\n"
-                "f\"<code>{new_token}</code>\n\n\""
-                "⏳ الصلاحية: 10 دقائق فقط (استخدمه الآن قبل انتهاء صلاحيته).\n"
-                "قم بنسخ الكود وضعه في الموقع لتفتح لك المكتبة فوراً! 🎬"
+                f"مرحباً بك في سِينِمَا زُونْ 🍿\n\n"
+                f"تم توليد كود الدخول الآمن الخاص بك بنجاح:\n\n"
+                f"<code>{new_token}</code>\n\n"
+                f"⏳ الصلاحية: 10 دقائق فقط (استخدمه الآن قبل انتهاء صلاحيته).\n"
+                f"قم بنسخ الكود وضعه في الموقع لتفتح لك المكتبة فوراً! 🎬"
             )
             bot.reply_to(message, welcome_text, parse_mode="HTML")
         else:
@@ -246,7 +248,7 @@ def callback_inline(call):
             return
             
         if call.data == "gen_token":
-            new_token = generate_and_save_token("المدير_العام")
+            new_token = generate_and_save_token("المدير_العام", ADMIN_CHAT_ID)
             bot.answer_callback_query(call.id, text="تم التوليد والحفظ بنجاح! 🔥")
             bot.send_message(call.message.chat.id, f"👑 <b>توكن جديد تم حقنه في الفايربيز:</b>\n<code>{new_token}</code>", parse_mode="HTML")
             
@@ -267,7 +269,7 @@ def callback_inline(call):
                 f"• إجمالي المشتركين بالبوت (للبث): 👥 <b>{subs_count} مستخدم</b>\n"
                 f"• التوكنات النشطة بالفايربيز حالياً: 🔑 <b>{active_count} توكن</b>\n"
                 f"• الأجهزة المحظورة نهائياً: 🚫 <b>{blocked_count} جهاز</b>\n\n"
-                "• حالة البوت: 🟢 يعمل بأعلى كفاءة"
+                f"• حالة البوت: 🟢 يعمل بأعلى كفاءة"
             )
             bot.send_message(call.message.chat.id, stats_text, parse_mode="HTML")
             
@@ -297,29 +299,44 @@ def handle_broadcast(message):
     bot.send_chat_action(message.chat.id, 'typing')
     broadcast_msg = f"📢 <b>تنويه رسمي من إدارة سِينِمَا زُونْ:</b>\n\n{command_text}"
     
-    # 1. جلب قائمة كافة المشتركين المسجلين بالفايربيز
+    # مجموعات المعرفات لضمان عدم تكرار الإرسال لنفس الشخص
+    target_chat_ids = set()
+    
+    # 1. جلب قائمة المشتركين من فرع البوت الأساسي
     try:
         subs_url = f"{FIREBASE_DB_URL}cz_bot_subscribers.json"
         subs_response = requests.get(subs_url, timeout=5)
         subscribers = subs_response.json() or {}
+        for uid in subscribers.keys():
+            target_chat_ids.add(int(uid))
     except Exception as e:
-        bot.reply_to(message, f"❌ تعذر سحب قائمة المشتركين من الفايربيز: {e}")
-        return
+        print(f"Error pulling subscribers: {e}")
 
-    if not subscribers:
+    # 2. خطة بديلة ودعم ذكي: سحب الأيدي من فرع التوكنات النشطة لضمان تعبئة القائمة بالكامل
+    try:
+        tokens_url = f"{FIREBASE_DB_URL}cz_active_tokens.json"
+        tokens_response = requests.get(tokens_url, timeout=5)
+        tokens_data = tokens_response.json() or {}
+        for t_info in tokens_data.values():
+            if isinstance(t_info, dict) and t_info.get("chat_id"):
+                target_chat_ids.add(int(t_info.get("chat_id")))
+    except Exception as e:
+        print(f"Error pulling fallback token chat ids: {e}")
+
+    if not target_chat_ids:
         bot.reply_to(message, "⚠️ لا يوجد مستخدمين مسجلين في قائمة البث حالياً.")
         return
 
     success_sends = 0
     failed_sends = 0
 
-    # 2. إطلاق الدوران التلقائي للإرسال والتثبيت القسري الفردي بداخل شاشة كل مستخدم
-    for target_chat_id in subscribers.keys():
+    # 3. إطلاق الدوران التلقائي للإرسال والتثبيت القسري بداخل شاشة كل مستخدم
+    for target_chat_id in target_chat_ids:
         try:
             # إرسال الرسالة للمشترك
-            sent = bot.send_message(int(target_chat_id), broadcast_msg, parse_mode="HTML")
+            sent = bot.send_message(target_chat_id, broadcast_msg, parse_mode="HTML")
             # تثبيت الرسالة فوراً في أعلى المحادثة الخاصة به
-            bot.pin_chat_message(int(target_chat_id), sent.message_id)
+            bot.pin_chat_message(target_chat_id, sent.message_id)
             success_sends += 1
             time.sleep(0.05)  # تأخير بسيط جداً لحماية البوت من حظر التلغرام (Flood Control)
         except Exception:
