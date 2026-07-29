@@ -49,7 +49,6 @@ def home():
 @app.route('/api/security/alert', methods=['GET', 'POST'])
 def security_alert():
     """مستقبل التنبيهات الذكي والمعدل بالكامل ليعمل بنظام HTML لمنع مشاكل الصياغة"""
-    
     if request.method == 'POST':
         data = request.get_json() or {}
     else:
@@ -60,7 +59,6 @@ def security_alert():
     fingerprint = data.get('fingerprint', 'لا يوجد')
     alert_type = data.get('type', 'auth_attempt')
     
-    # تنسيق الرسائل الملكي الآمن بصيغة HTML لتجنب السقوط
     if alert_type == "hardware_block":
         msg = (
             f"🚨 <b>تنبيه أمان: محاولة اختراق أو جهاز متعدد!</b>\n\n"
@@ -88,6 +86,94 @@ def security_alert():
         
     send_telegram_alert(msg)
     return jsonify({"status": "success", "message": "Alert processed successfully."}), 200
+
+
+# ==========================================
+# 🛡️ [إضافة الحالة الأمنية الجديدة]: نظام حماية الأجهزة المتعددة والطرد
+# ==========================================
+@app.route('/api/security/verify-device', methods=['POST'])
+def verify_device():
+    """التحقق من بصمة العتاد ومنع تشغيل التوكن على أكثر من جهاز"""
+    data = request.get_json() or {}
+    token = data.get('token', '').strip()
+    username = data.get('username', 'عضو مجهول')
+    fingerprint = data.get('fingerprint', '')
+
+    if not token or not fingerprint:
+        return jsonify({"allowed": False, "message": "⚠️ بيانات الأمان غير مكتملة."}), 400
+
+    # الفحص المبدئي: إذا كانت بصمة هذا الجهاز محظورة مسبقاً بالكامل
+    if is_hardware_blocked(fingerprint):
+        return jsonify({
+            "allowed": False, 
+            "message": "🚨 تم حظر جهازك تلقائياً لحماية معايير الأمان."
+        }), 403
+
+    try:
+        # 1. جلب بيانات التوكن من الفايربيز
+        token_url = f"{FIREBASE_DB_URL}cz_active_tokens/{token}.json"
+        token_response = requests.get(token_url, timeout=5)
+        token_data = token_response.json()
+
+        if not token_data:
+            return jsonify({"allowed": False, "message": "❌ التوكن المستخدم غير صحيح أو منتهي الصلاحية."}), 401
+
+        # 2. قفل التوكن على أول جهاز يقوم بتفعيله
+        if "fingerprint" not in token_data:
+            token_data["fingerprint"] = fingerprint
+            requests.put(token_url, json=token_data, timeout=5)
+            print(f"🔒 [Lock System] Token {token} locked to Device: {fingerprint}")
+            return jsonify({"allowed": True, "message": "✅ تم تفعيل وقفل التوكن على جهازك الحالي بنجاح."}), 200
+
+        # 3. نظام الطرد التلقائي في حال اختلف المعرف (فتح التوكن من جهاز آخر)
+        elif token_data["fingerprint"] != fingerprint:
+            # حظر حساب التلغرام المرتبط بالتوكن قسرياً
+            block_user_in_firebase(token_data.get('chat_id', 'unknown'), username, f"مشاركة توكن مع جهاز آخر: {fingerprint}")
+            
+            # حظر بصمة العتاد الدخيلة في فرع مستقل للأجهزة
+            safe_fw = fingerprint.replace('.', '_')
+            block_hw_url = f"{FIREBASE_DB_URL}cz_blocked_hardware/{safe_fw}.json"
+            requests.put(block_hw_url, json={
+                "username": username,
+                "associated_token": token,
+                "timestamp": int(time.time() * 1000),
+                "reason": "Multi-device detected"
+            }, timeout=5)
+
+            # بث الإشعار للمدير فوراً
+            alert_msg = (
+                f"🚨 <b>خرق أمني: محاولة فتح توكن من جهازين!</b>\n\n"
+                f"👤 <b>المستخدم:</b> {username}\n"
+                f"🔑 <b>التوكن المستهدف:</b> <code>{token}</code>\n"
+                f"🔒 <b>العتاد الأصلي:</b> <code>{token_data['fingerprint']}</code>\n"
+                f"❌ <b>العتاد الدخيل (المطرود):</b> <code>{fingerprint}</code>\n\n"
+                f"🔺 <i>تم حظر العتاد الدخيل وتفعيل الطرد التلقائي بنجاح!</i>"
+            )
+            send_telegram_alert(alert_msg)
+
+            return jsonify({
+                "allowed": False, 
+                "message": "🚨 أمن المنصة: لا يمكن استخدام هذا التوكن على أكثر من جهاز! تم طرد المحاولة وحظر الجهاز تلقائياً."
+            }), 403
+
+        return jsonify({"allowed": True, "message": "مرحباً بك مجدداً في Cinema Zone."}), 200
+
+    except Exception as e:
+        return jsonify({"allowed": False, "message": f"❌ خطأ أمني: {e}"}), 500
+
+
+def is_hardware_blocked(fingerprint):
+    """دالة فحص ما إذا كان العتاد مسجلاً في القائمة السوداء للأجهزة بالفايربيز"""
+    try:
+        safe_fw = fingerprint.replace('.', '_')
+        url = f"{FIREBASE_DB_URL}cz_blocked_hardware/{safe_fw}.json"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200 and response.json() is not None:
+            return True
+    except Exception:
+        pass
+    return False
+
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -190,7 +276,6 @@ def send_welcome(message):
     except Exception:
         pass
 
-    # تسجيل الحساب فوراً بقائمة المشتركين للبث والتثبيت لاحقاً
     save_bot_subscriber(user_id, username)
 
     if user_id not in user_requests:
@@ -204,7 +289,6 @@ def send_welcome(message):
         bot.reply_to(message, "❌ تم حظر حسابك تلقائياً بسبب محاولة إغراق النظام بالطلبات.")
         return
 
-    # 🚨 القائد والمشرف العام ولوحة التحكم المتطورة لمواكبة أرقى البوتات
     if user_id == ADMIN_CHAT_ID:
         markup = types.InlineKeyboardMarkup(row_width=2)
         btn_generate = types.InlineKeyboardButton("توليد توكن تجريبي ⚡", callback_data="gen_token")
@@ -227,7 +311,6 @@ def send_welcome(message):
         new_token = generate_and_save_token(username, user_id)
         
         if new_token:
-            # 🛠️ تم تصحيح صياغة النص (f-string) هنا لطباعة التوكن داخل الحساب الاحتياطي بنجاح
             welcome_text = (
                 f"مرحباً بك في سِينِمَا زُونْ 🍿\n\n"
                 f"تم توليد كود الدخول الآمن الخاص بك بنجاح:\n\n"
@@ -239,7 +322,6 @@ def send_welcome(message):
         else:
             bot.reply_to(message, "❌ عذراً, حدث خطأ أثناء الاتصال بقاعدة البيانات. أعد المحاولة لاحقاً.")
 
-# معالجة الأزرار التفاعلية (Inline Keyboard Callback Engine)
 @bot.callback_query_handler(func=lambda call: True)
 def callback_inline(call):
     if call.message:
@@ -258,17 +340,20 @@ def callback_inline(call):
                 tokens_res = requests.get(f"{FIREBASE_DB_URL}cz_active_tokens.json", timeout=5).json() or {}
                 blocks_res = requests.get(f"{FIREBASE_DB_URL}cz_blocked_users.json", timeout=5).json() or {}
                 subs_res = requests.get(f"{FIREBASE_DB_URL}cz_bot_subscribers.json", timeout=5).json() or {}
+                hw_blocks_res = requests.get(f"{FIREBASE_DB_URL}cz_blocked_hardware.json", timeout=5).json() or {}
                 active_count = len(tokens_res)
                 blocked_count = len(blocks_res)
                 subs_count = len(subs_res)
+                hw_blocked_count = len(hw_blocks_res)
             except Exception:
-                active_count, blocked_count, subs_count = "N/A", "N/A", "N/A"
+                active_count, blocked_count, subs_count, hw_blocked_count = "N/A", "N/A", "N/A", "N/A"
                 
             stats_text = (
                 "📊 <b>تقرير الإحصائيات الفوري للنظام:</b>\n\n"
                 f"• إجمالي المشتركين بالبوت (للبث): 👥 <b>{subs_count} مستخدم</b>\n"
                 f"• التوكنات النشطة بالفايربيز حالياً: 🔑 <b>{active_count} توكن</b>\n"
-                f"• الأجهزة المحظورة نهائياً: 🚫 <b>{blocked_count} جهاز</b>\n\n"
+                f"• حسابات المستخدمين المحظورة: 🚫 <b>{blocked_count} حساب</b>\n"
+                f"• أجهزة العتاد المحظورة أمنياً: 🛡️ <b>{hw_blocked_count} جهاز</b>\n\n"
                 f"• حالة البوت: 🟢 يعمل بأعلى كفاءة"
             )
             bot.send_message(call.message.chat.id, stats_text, parse_mode="HTML")
@@ -282,9 +367,6 @@ def callback_inline(call):
             )
             bot.send_message(call.message.chat.id, instruction_text, parse_mode="HTML")
 
-# ==========================================
-# 📢 محرك البث الذكي وتثبيت الإعلانات الفردي الجماعي (Broadcast & Dynamic Multi-Pin Engine)
-# ==========================================
 @bot.message_handler(commands=['broadcast'])
 def handle_broadcast(message):
     if message.from_user.id != ADMIN_CHAT_ID:
@@ -299,10 +381,8 @@ def handle_broadcast(message):
     bot.send_chat_action(message.chat.id, 'typing')
     broadcast_msg = f"📢 <b>تنويه رسمي من إدارة سِينِمَا زُونْ:</b>\n\n{command_text}"
     
-    # مجموعات المعرفات لضمان عدم تكرار الإرسال لنفس الشخص
     target_chat_ids = set()
     
-    # 1. جلب قائمة المشتركين من فرع البوت الأساسي
     try:
         subs_url = f"{FIREBASE_DB_URL}cz_bot_subscribers.json"
         subs_response = requests.get(subs_url, timeout=5)
@@ -312,7 +392,6 @@ def handle_broadcast(message):
     except Exception as e:
         print(f"Error pulling subscribers: {e}")
 
-    # 2. خطة بديلة ودعم ذكي: سحب الأيدي من فرع التوكنات النشطة لضمان تعبئة القائمة بالكامل
     try:
         tokens_url = f"{FIREBASE_DB_URL}cz_active_tokens.json"
         tokens_response = requests.get(tokens_url, timeout=5)
@@ -330,23 +409,19 @@ def handle_broadcast(message):
     success_sends = 0
     failed_sends = 0
 
-    # 3. إطلاق الدوران التلقائي للإرسال والتثبيت القسري بداخل شاشة كل مستخدم
     for target_chat_id in target_chat_ids:
         try:
-            # إرسال الرسالة للمشترك
             sent = bot.send_message(target_chat_id, broadcast_msg, parse_mode="HTML")
-            # تثبيت الرسالة فوراً في أعلى المحادثة الخاصة به
             bot.pin_chat_message(target_chat_id, sent.message_id)
             success_sends += 1
-            time.sleep(0.05)  # تأخير بسيط جداً لحماية البوت من حظر التلغرام (Flood Control)
+            time.sleep(0.05)
         except Exception:
             failed_sends += 1
 
-    # إشعار المدير بنتيجة البث النهائي
     report_text = (
         f"📢 <b>تمت عملية البث والتعليق بنجاح!</b>\n\n"
         f"🟢 تم الإرسال والتثبيت لـ: <b>{success_sends} مستخدم</b>\n"
-        f"🔴 فشل الإرسال لـ: <b>{failed_sends} مستخدم</b> (بسبب حظر البوت أو حسابات مغلقة)"
+        f"🔴 فشل الإرسال لـ: <b>{failed_sends} مستخدم</b> (بسبب حظر البوت)"
     )
     bot.reply_to(message, report_text, parse_mode="HTML")
 
