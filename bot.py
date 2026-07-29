@@ -206,10 +206,11 @@ def block_user_in_firebase(user_id, username, reason):
         print(f"Error blocking user: {e}")
 
 def save_bot_subscriber(user_id, username):
-    """حفظ معرف المستخدم الفردي في الفايربيز لتمكين البث وتثبيت الرسائل للجميع تلقائياً"""
+    """تحديث الأمان: حفظ معرف المستخدم الفردي وحقن الـ chat_id قسرياً لضمان دقة العدادات والبث"""
     try:
         url = f"{FIREBASE_DB_URL}cz_bot_subscribers/{user_id}.json"
         subscriber_data = {
+            "chat_id": user_id,
             "username": f"@{username}" if username else "عضو فخم",
             "last_interaction": int(time.time() * 1000)
         }
@@ -316,7 +317,7 @@ def send_welcome(message):
                 f"تم توليد كود الدخول الآمن الخاص بك بنجاح:\n\n"
                 f"<code>{new_token}</code>\n\n"
                 f"⏳ الصلاحية: 10 دقائق فقط (استخدمه الآن قبل انتهاء صلاحيته).\n"
-                f"قم بنسخ الكود وضعه في الموقع لتفتح لك المكتبة فوراً! 🎬"
+                f"قم بنسخ الكود وضعه in الموقع لتفتح لك المكتبة فوراً! 🎬"
             )
             bot.reply_to(message, welcome_text, parse_mode="HTML")
         else:
@@ -335,17 +336,30 @@ def callback_inline(call):
             bot.send_message(call.message.chat.id, f"👑 <b>توكن جديد تم حقنه في الفايربيز:</b>\n<code>{new_token}</code>", parse_mode="HTML")
             
         elif call.data == "view_stats":
-            bot.answer_callback_query(call.id, text="جاري جلب إحصائيات النظام...")
+            bot.answer_callback_query(call.id, text="جاري جلب إحصائيات النظام الفورية...")
             try:
                 tokens_res = requests.get(f"{FIREBASE_DB_URL}cz_active_tokens.json", timeout=5).json() or {}
                 blocks_res = requests.get(f"{FIREBASE_DB_URL}cz_blocked_users.json", timeout=5).json() or {}
                 subs_res = requests.get(f"{FIREBASE_DB_URL}cz_bot_subscribers.json", timeout=5).json() or {}
                 hw_blocks_res = requests.get(f"{FIREBASE_DB_URL}cz_blocked_hardware.json", timeout=5).json() or {}
-                active_count = len(tokens_res)
-                blocked_count = len(blocks_res)
-                subs_count = len(subs_res)
-                hw_blocked_count = len(hw_blocks_res)
-            except Exception:
+                
+                # معالجة ذكية ومحصنة لحساب الأعداد بدقة حتى لو اعتبرت الفايربيز البيانات كمصفوفة أو قاموس
+                active_count = len(tokens_res) if isinstance(tokens_res, (dict, list)) else 0
+                blocked_count = len(blocks_res) if isinstance(blocks_res, (dict, list)) else 0
+                
+                # تصفية وفلترة قيم الـ None في حال تم إرجاع مصفوفة تحتوي على فجوات من الفايربيز
+                if isinstance(subs_res, list):
+                    subs_count = len([x for x in subs_res if x is not None])
+                else:
+                    subs_count = len(subs_res) if isinstance(subs_res, dict) else 0
+
+                if isinstance(hw_blocks_res, list):
+                    hw_blocked_count = len([x for x in hw_blocks_res if x is not None])
+                else:
+                    hw_blocked_count = len(hw_blocks_res) if isinstance(hw_blocks_res, dict) else 0
+                    
+            except Exception as e:
+                print(f"Error parsing stats metrics: {e}")
                 active_count, blocked_count, subs_count, hw_blocked_count = "N/A", "N/A", "N/A", "N/A"
                 
             stats_text = (
@@ -387,8 +401,14 @@ def handle_broadcast(message):
         subs_url = f"{FIREBASE_DB_URL}cz_bot_subscribers.json"
         subs_response = requests.get(subs_url, timeout=5)
         subscribers = subs_response.json() or {}
-        for uid in subscribers.keys():
-            target_chat_ids.add(int(uid))
+        
+        if isinstance(subscribers, dict):
+            for uid in subscribers.keys():
+                target_chat_ids.add(int(uid))
+        elif isinstance(subscribers, list):
+            for idx, val in enumerate(subscribers):
+                if val is not None:
+                    target_chat_ids.add(idx)
     except Exception as e:
         print(f"Error pulling subscribers: {e}")
 
@@ -396,9 +416,10 @@ def handle_broadcast(message):
         tokens_url = f"{FIREBASE_DB_URL}cz_active_tokens.json"
         tokens_response = requests.get(tokens_url, timeout=5)
         tokens_data = tokens_response.json() or {}
-        for t_info in tokens_data.values():
-            if isinstance(t_info, dict) and t_info.get("chat_id"):
-                target_chat_ids.add(int(t_info.get("chat_id")))
+        if isinstance(tokens_data, dict):
+            for t_info in tokens_data.values():
+                if isinstance(t_info, dict) and t_info.get("chat_id"):
+                    target_chat_ids.add(int(t_info.get("chat_id")))
     except Exception as e:
         print(f"Error pulling fallback token chat ids: {e}")
 
