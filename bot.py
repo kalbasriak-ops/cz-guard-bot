@@ -130,14 +130,15 @@ def verify_device():
             # حظر حساب التلغرام المرتبط بالتوكن قسرياً
             block_user_in_firebase(token_data.get('chat_id', 'unknown'), username, f"مشاركة توكن مع جهاز آخر: {fingerprint}")
             
-            # حظر بصمة العتاد الدخيلة في فرع مستقل للأجهزة
+            # حظر بصمة العتاد الدخيلة في فرع مستقل للأجهزة وثقنا فيها التوكن والاسم للوحة التحكم والبحث
             safe_fw = fingerprint.replace('.', '_')
             block_hw_url = f"{FIREBASE_DB_URL}cz_blocked_hardware/{safe_fw}.json"
             requests.put(block_hw_url, json={
+                "fingerprint": fingerprint,
                 "username": username,
                 "associated_token": token,
                 "timestamp": int(time.time() * 1000),
-                "reason": "Multi-device detected"
+                "reason": "مشاركة توكن وتعدد أجهزة في الموقع"
             }, timeout=5)
 
             # بث الإشعار للمدير فوراً
@@ -317,7 +318,7 @@ def send_welcome(message):
                 f"تم توليد كود الدخول الآمن الخاص بك بنجاح:\n\n"
                 f"<code>{new_token}</code>\n\n"
                 f"⏳ الصلاحية: 10 دقائق فقط (استخدمه الآن قبل انتهاء صلاحيته).\n"
-                f"قم بنسخ الكود وضعه in الموقع لتفتح لك المكتبة فوراً! 🎬"
+                f"قم بنسخ الكود وضعه في الموقع لتفتح لك المكتبة فوراً! 🎬"
             )
             bot.reply_to(message, welcome_text, parse_mode="HTML")
         else:
@@ -343,20 +344,11 @@ def callback_inline(call):
                 subs_res = requests.get(f"{FIREBASE_DB_URL}cz_bot_subscribers.json", timeout=5).json() or {}
                 hw_blocks_res = requests.get(f"{FIREBASE_DB_URL}cz_blocked_hardware.json", timeout=5).json() or {}
                 
-                # معالجة ذكية ومحصنة لحساب الأعداد بدقة حتى لو اعتبرت الفايربيز البيانات كمصفوفة أو قاموس
-                active_count = len(tokens_res) if isinstance(tokens_res, (dict, list)) else 0
-                blocked_count = len(blocks_res) if isinstance(blocks_res, (dict, list)) else 0
-                
-                # تصفية وفلترة قيم الـ None في حال تم إرجاع مصفوفة تحتوي على فجوات من الفايربيز
-                if isinstance(subs_res, list):
-                    subs_count = len([x for x in subs_res if x is not None])
-                else:
-                    subs_count = len(subs_res) if isinstance(subs_res, dict) else 0
-
-                if isinstance(hw_blocks_res, list):
-                    hw_blocked_count = len([x for x in hw_blocks_res if x is not None])
-                else:
-                    hw_blocked_count = len(hw_blocks_res) if isinstance(hw_blocks_res, dict) else 0
+                # حساب الطول الفعلي للمفاتيح لمنع مشكلة الـ None والـ List المفرغة نهائياً
+                active_count = len(tokens_res.keys()) if isinstance(tokens_res, dict) else (len([x for x in tokens_res if x is not None]) if isinstance(tokens_res, list) else 0)
+                blocked_count = len(blocks_res.keys()) if isinstance(blocks_res, dict) else (len([x for x in blocks_res if x is not None]) if isinstance(blocks_res, list) else 0)
+                subs_count = len(subs_res.keys()) if isinstance(subs_res, dict) else (len([x for x in subs_res if x is not None]) if isinstance(subs_res, list) else 0)
+                hw_blocked_count = len(hw_blocks_res.keys()) if isinstance(hw_blocks_res, dict) else (len([x for x in hw_blocks_res if x is not None]) if isinstance(hw_blocks_res, list) else 0)
                     
             except Exception as e:
                 print(f"Error parsing stats metrics: {e}")
@@ -389,7 +381,7 @@ def handle_broadcast(message):
     command_text = message.text.replace('/broadcast', '').strip()
     
     if not command_text:
-        bot.reply_to(message, "❌ <b>صيغة خاطئة!</b> يرجى كتابة الإعلان بعد الأمر، مثال:\n<code>/broadcast سهرة الليلة فيلم رعب فخم جداً!</code>", parse_mode="HTML")
+        bot.reply_to(message, "❌ <b>صيغة خاطئة!</b> يرجى كتابة الإعلان بعد الأمر, مثال:\n<code>/broadcast سهرة الليلة فيلم رعب فخم جداً!</code>", parse_mode="HTML")
         return
         
     bot.send_chat_action(message.chat.id, 'typing')
